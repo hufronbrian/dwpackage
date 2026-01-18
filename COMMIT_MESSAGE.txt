@@ -16,4 +16,10 @@ Features documented:
 
 Based on patterns from DocWire installer.
 
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+
+Add LICENSE and Fork encouragement
+
+- LICENSE: GPLX-XBasic license
+- README: Fork This section encouraging community use
+- README: License section

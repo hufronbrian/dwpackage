@@ -48,3 +48,19 @@ your-project/
 ## Based On
 
 Patterns extracted from [DocWire](https://github.com/hufronbrian/docwire) installer.
+
+## Fork This
+
+This project may not be actively maintained. That's okay.
+
+dwpackage is a template, not a product. If it works for you:
+- Use it
+- Fork it
+- Extend it
+- Build something better
+
+The patterns are yours to evolve.
+
+## License
+
+[GPLX-XBasic](https://github.com/hufronbrian/gplx) - See LICENSE for details.
