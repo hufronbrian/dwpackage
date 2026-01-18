@@ -1,0 +1,228 @@
+=== DWML REGISTRY FORMAT
+Simple markup format for storing service/process registries
+
+=== WHY DWML
+
+- Human readable
+- Easy to parse with regex
+- No external dependencies (no JSON/YAML parsers needed)
+- Works in both PowerShell and Bash
+- Supports multiple values in single field
+
+=== FORMAT
+
+Block structure:
+  =d={blockname}=w=
+  {content}
+  =q={blockname}=e=
+
+Inline key-value:
+  =x= {key};|{value1}|{value2}|{value3}|; =z=
+
+Comment:
+  =#= {comment text} =o=
+
+=== REGISTRY EXAMPLE
+
+For tracking running services/watchers:
+
+=d=meta=w=
+=x= watchers;|C:\path\to\project1|12345|2026-01-18T10:00:00Z|C:\path\to\project2|67890|2026-01-18T11:00:00Z|; =z=
+=q=meta=e=
+
+Structure: |{path}|{pid}|{timestamp}| repeated for each entry
+
+=== PARSING
+
+---
+PowerShell
+
+function Parse-DwmlRegistry {
+    param([string]$content)
+
+    $watchers = @()
+
+    if ($content -match '=x=\s*watchers;([^=]*?);\s*=z=') {
+        $raw = $matches[1].Trim()
+        $parts = $raw.Split('|') | Where-Object { $_ }
+
+        for ($i = 0; $i -lt $parts.Count - 2; $i += 3) {
+            $watchers += @{
+                path = $parts[$i]
+                pid = $parts[$i + 1]
+                started = $parts[$i + 2]
+            }
+        }
+    }
+
+    return $watchers
+}
+
+function Format-DwmlRegistry {
+    param([array]$watchers)
+
+    if ($watchers.Count -eq 0) { return '' }
+
+    $entries = ($watchers | ForEach-Object { "$($_.path)|$($_.pid)|$($_.started)" }) -join '|'
+    return "=d=meta=w=`n=x= watchers;|$entries|; =z=`n=q=meta=e=`n"
+}
+
+# Usage
+$content = Get-Content "registry.txt" -Raw
+$watchers = Parse-DwmlRegistry $content
+
+foreach ($w in $watchers) {
+    Write-Host "PID: $($w.pid) - Path: $($w.path)"
+    taskkill /PID $w.pid /F 2>$null | Out-Null
+}
+
+---
+Bash
+
+parse_dwml_registry() {
+    local content="$1"
+    local -n result=$2  # nameref for returning array
+
+    if echo "$content" | grep -q "=x= watchers;"; then
+        local raw=$(echo "$content" | grep -o '=x= watchers;[^;]*;' | sed 's/=x= watchers;//' | sed 's/;//')
+        IFS='|' read -ra PARTS <<< "$raw"
+
+        local i=0
+        while [ $i -lt ${#PARTS[@]} ]; do
+            if [ -n "${PARTS[$i]}" ]; then
+                result+=("${PARTS[$i]}|${PARTS[$((i+1))]}|${PARTS[$((i+2))]}")
+            fi
+            i=$((i+3))
+        done
+    fi
+}
+
+format_dwml_registry() {
+    local -n watchers=$1
+
+    if [ ${#watchers[@]} -eq 0 ]; then
+        echo ""
+        return
+    fi
+
+    local entries=$(IFS='|'; echo "${watchers[*]}")
+    echo "=d=meta=w="
+    echo "=x= watchers;|$entries|; =z="
+    echo "=q=meta=e="
+}
+
+# Usage
+content=$(cat "registry.txt")
+declare -a watchers
+parse_dwml_registry "$content" watchers
+
+for entry in "${watchers[@]}"; do
+    IFS='|' read -r path pid started <<< "$entry"
+    echo "PID: $pid - Path: $path"
+    kill "$pid" 2>/dev/null
+done
+
+---
+Python
+
+import re
+
+def parse_dwml_registry(content):
+    watchers = []
+
+    match = re.search(r'=x=\s*watchers;([^=]*?);\s*=z=', content)
+    if match:
+        raw = match.group(1).strip()
+        parts = [p for p in raw.split('|') if p]
+
+        i = 0
+        while i + 2 < len(parts):
+            watchers.append({
+                'path': parts[i],
+                'pid': parts[i + 1],
+                'started': parts[i + 2]
+            })
+            i += 3
+
+    return watchers
+
+def format_dwml_registry(watchers):
+    if not watchers:
+        return ''
+
+    entries = '|'.join([f'{w["path"]}|{w["pid"]}|{w["started"]}' for w in watchers])
+    return f'=d=meta=w=\n=x= watchers;|{entries}|; =z=\n=q=meta=e=\n'
+
+# Usage
+with open('registry.txt') as f:
+    content = f.read()
+
+watchers = parse_dwml_registry(content)
+
+for w in watchers:
+    print(f"PID: {w['pid']} - Path: {w['path']}")
+    os.kill(int(w['pid']), signal.SIGTERM)
+
+=== EXTENDING THE FORMAT
+
+---
+Multiple keys
+
+=d=meta=w=
+=x= watchers;|path1|pid1|ts1|path2|pid2|ts2|; =z=
+=x= version;|1.0.0|; =z=
+=x= updated;|2026-01-18T12:00:00Z|; =z=
+=q=meta=e=
+
+---
+Different data types
+
+Projects list:
+=x= projects;|/path/to/proj1|/path/to/proj2|/path/to/proj3|; =z=
+
+Config values:
+=x= config;|key1:value1|key2:value2|key3:value3|; =z=
+
+Simple flag:
+=x= enabled;|true|; =z=
+
+=== REGEX PATTERNS
+
+Extract watchers field:
+  =x=\s*watchers;([^=]*?);\s*=z=
+
+Extract any field by name:
+  =x=\s*{fieldname};([^=]*?);\s*=z=
+
+Extract block content:
+  =d={blockname}=w=([\s\S]*?)=q={blockname}=e=
+
+=== GOTCHAS
+
+1. Pipe character | is the delimiter
+   - Don't use | in values
+   - Or escape it if needed
+
+2. Semicolon ; ends the value section
+   - Don't use ; in values
+
+3. Empty parts after split
+   - Filter out empty strings after splitting by |
+   - Format: |val1|val2| creates empty first/last elements
+
+4. Whitespace handling
+   - Trim raw value after regex match
+   - Some parsers may include newlines
+
+5. File may be empty or missing
+   - Always check file exists
+   - Handle empty content gracefully
+
+=== BENEFITS OVER JSON/YAML
+
+- No parsing library needed
+- Works with basic string operations
+- Human editable
+- Grep-friendly (one line per field)
+- No escaping quotes
+- No indentation issues

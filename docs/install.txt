@@ -1,0 +1,264 @@
+=== INSTALL BEHAVIOR
+Cross-platform script installer patterns
+
+=== OVERVIEW
+
+Install scripts handle:
+1. Dependency checking
+2. Stop running services
+3. Clean old files
+4. Copy new files
+5. Fix permissions (Linux)
+6. Add to PATH
+7. Update remote instances (if any registered)
+8. Post-install hooks
+9. User notification
+
+=== INSTALL FLOW
+
+[Check deps] -> [Stop services] -> [Clean old] -> [Copy new] -> [PATH] -> [Update remotes] -> [Hooks] -> [Notify]
+
+=== INSTALL LOCATIONS
+
+Windows:  C:\Users\{user}\bin\{toolname}\
+Linux:    ~/.local/bin/{toolname}/
+
+=== WINDOWS (PowerShell)
+
+---
+Template: install.ps1
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "Installing {ToolName} (Windows)" -ForegroundColor Cyan
+
+# === PATHS ===
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$sourceDir = Join-Path $scriptDir "win"
+$installDir = Join-Path $env:USERPROFILE "bin\{toolname}"
+
+# === CHECK DEPENDENCIES ===
+# Python
+$hasPython = $false
+try {
+    $pythonVersion = python --version 2>&1
+    if ($pythonVersion -match "Python") { $hasPython = $true }
+} catch {}
+
+if (-not $hasPython) {
+    Write-Host "Python not found" -ForegroundColor Yellow
+    $choice = Read-Host "Open download page? [y/N]"
+    if ($choice -eq "y") {
+        Start-Process "https://www.python.org/downloads/"
+    }
+    exit 1
+}
+
+# Python module
+$hasModule = $false
+try {
+    python -c "import {modulename}" 2>&1 | Out-Null
+    $hasModule = $true
+} catch {}
+
+if (-not $hasModule) {
+    Write-Host "{modulename} not found" -ForegroundColor Yellow
+    $choice = Read-Host "Install now? [y/N]"
+    if ($choice -eq "y") { pip install {modulename} }
+    else { exit 1 }
+}
+
+# === STOP RUNNING SERVICES ===
+$registryFile = Join-Path $installDir "registry.txt"
+$stoppedPaths = @()
+if (Test-Path $registryFile) {
+    Write-Host "Stopping running services..."
+    $content = Get-Content $registryFile -Raw
+    # Parse your registry format here
+    # Use taskkill /PID $procId /F to kill processes
+    # Track paths in $stoppedPaths for notification
+}
+
+# === CREATE INSTALL DIR ===
+if (-not (Test-Path $installDir)) {
+    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+}
+
+# === CLEAN OLD FILES ===
+$templateDir = Join-Path $installDir "template"
+if (Test-Path $templateDir) {
+    Remove-Item -Path $templateDir -Recurse -Force
+}
+
+# === COPY NEW FILES ===
+Copy-Item -Path "$sourceDir\*" -Destination $installDir -Recurse -Force
+
+# === ADD TO PATH ===
+$currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($currentPath -notlike "*$installDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$currentPath;$installDir", "User")
+    Write-Host "Added to PATH" -ForegroundColor Green
+}
+
+# === UPDATE REMOTE INSTANCES ===
+# If tool has registered projects/instances, update them
+$toolExe = Join-Path $installDir "{tool}.bat"
+if (Test-Path $toolExe) {
+    Write-Host "Updating registered instances..."
+    & $toolExe all update
+}
+
+# === POST-INSTALL HOOKS ===
+# Run any additional post-install commands here
+
+# === NOTIFY USER ===
+Write-Host ""
+Write-Host "Installation complete!" -ForegroundColor Green
+
+if ($stoppedPaths.Count -gt 0) {
+    Write-Host "NOTE: Services were stopped. Restart with: {toolname} start" -ForegroundColor Yellow
+}
+
+Write-Host "Restart terminal for PATH changes to take effect"
+
+=== LINUX/MAC/WSL (Bash)
+
+---
+Template: install.sh
+
+#!/bin/bash
+set -e
+
+# === NON-INTERACTIVE MODE ===
+AUTO_YES=0
+if [ "$1" = "-y" ]; then AUTO_YES=1; fi
+
+echo "Installing {ToolName} (Linux/Mac/WSL)"
+
+# === PATHS ===
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SOURCE_DIR="$SCRIPT_DIR/unx"
+INSTALL_DIR="$HOME/.local/bin/{toolname}"
+
+# === CHECK DEPENDENCIES ===
+# Python
+if ! command -v python3 &> /dev/null; then
+    echo "Python3 not found"
+    if [ "$AUTO_YES" -eq 1 ]; then choice="y"; else read -p "Install? [y/N]: " choice; fi
+    if [ "$choice" = "y" ]; then
+        sudo apt install -y python3
+    else
+        exit 1
+    fi
+fi
+
+# Python module
+if ! python3 -c "import {modulename}" &> /dev/null; then
+    echo "{modulename} not found"
+    if [ "$AUTO_YES" -eq 1 ]; then choice="y"; else read -p "Install? [y/N]: " choice; fi
+    if [ "$choice" = "y" ]; then
+        pip3 install {modulename}
+    else
+        exit 1
+    fi
+fi
+
+# === STOP RUNNING SERVICES ===
+STOPPED_COUNT=0
+REGISTRY_FILE="$INSTALL_DIR/registry.txt"
+if [ -f "$REGISTRY_FILE" ]; then
+    echo "Stopping running services..."
+    # Parse your registry format here
+    # Use kill $PID_VAL to stop processes
+    # Increment STOPPED_COUNT
+fi
+
+# === CREATE INSTALL DIR ===
+mkdir -p "$INSTALL_DIR"
+
+# === CLEAN OLD FILES ===
+if [ -d "$INSTALL_DIR/template" ]; then
+    rm -rf "$INSTALL_DIR/template"
+fi
+
+# === COPY NEW FILES ===
+cp -r "$SOURCE_DIR"/* "$INSTALL_DIR/"
+
+# === FIX PERMISSIONS ===
+chmod +x "$INSTALL_DIR/{mainscript}"
+
+# === FIX LINE ENDINGS (if edited on Windows) ===
+sed -i 's/\r$//' "$INSTALL_DIR/{mainscript}"
+
+# === ADD TO PATH ===
+SHELL_RC=""
+if [ -f "$HOME/.zshrc" ]; then SHELL_RC="$HOME/.zshrc"
+elif [ -f "$HOME/.bashrc" ]; then SHELL_RC="$HOME/.bashrc"
+fi
+
+PATH_LINE='export PATH="$HOME/.local/bin/{toolname}:$PATH"'
+if [ -n "$SHELL_RC" ]; then
+    if ! grep -q ".local/bin/{toolname}" "$SHELL_RC"; then
+        echo "" >> "$SHELL_RC"
+        echo "# {ToolName}" >> "$SHELL_RC"
+        echo "$PATH_LINE" >> "$SHELL_RC"
+    fi
+fi
+
+# === UPDATE REMOTE INSTANCES ===
+# If tool has registered projects/instances, update them
+if [ -x "$INSTALL_DIR/{mainscript}" ]; then
+    echo "Updating registered instances..."
+    "$INSTALL_DIR/{mainscript}" all update
+fi
+
+# === POST-INSTALL HOOKS ===
+# Run any additional post-install commands here
+
+# === NOTIFY USER ===
+echo ""
+echo "Installation complete!"
+
+if [ $STOPPED_COUNT -gt 0 ]; then
+    echo "NOTE: $STOPPED_COUNT service(s) stopped. Restart with: {toolname} start"
+fi
+
+echo "Run: source $SHELL_RC"
+
+=== KEY PATTERNS
+
+---
+Pattern: Reserved variable names
+
+PowerShell reserved: $pid, $pwd, $home, $null, $true, $false
+Use alternatives: $procId, $workDir, $homeDir
+
+---
+Pattern: Error handling
+
+PowerShell: $ErrorActionPreference = "Stop"
+Bash: set -e
+
+---
+Pattern: Idempotent PATH addition
+
+Check before adding to avoid duplicates.
+
+---
+Pattern: Clean before copy
+
+Delete target folder before copying to prevent stale files.
+Copy-Item merges, doesn't replace.
+
+---
+Pattern: Non-interactive mode
+
+Accept -y flag to skip all prompts (for CI/automation).
+
+=== GOTCHAS
+
+1. PowerShell $pid is reserved (use $procId)
+2. Copy-Item -Recurse merges, doesn't replace
+3. Bash arrays syntax differs from sh
+4. Windows needs terminal restart for PATH
+5. Linux needs source ~/.bashrc or new terminal

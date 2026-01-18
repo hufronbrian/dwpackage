@@ -1,0 +1,209 @@
+=== UNINSTALL BEHAVIOR
+Cross-platform script uninstaller patterns
+
+=== OVERVIEW
+
+Uninstall scripts handle:
+1. Stop running services
+2. Remove install directory
+3. Remove from PATH
+4. User notification about leftover data
+
+=== UNINSTALL FLOW
+
+[Stop services] -> [Remove files] -> [Remove PATH] -> [Notify]
+
+=== WINDOWS (PowerShell)
+
+---
+Template: uninstall.ps1
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "Uninstalling {ToolName} (Windows)" -ForegroundColor Cyan
+
+# === PATHS ===
+$installDir = Join-Path $env:USERPROFILE "bin\{toolname}"
+
+# === STOP RUNNING SERVICES ===
+$registryFile = Join-Path $installDir "registry.txt"
+if (Test-Path $registryFile) {
+    Write-Host "Stopping running services..."
+    $content = Get-Content $registryFile -Raw
+
+    # Example: Parse DWML format
+    if ($content -match '=x=\s*watchers;([^=]*?);\s*=z=') {
+        $raw = $matches[1].Trim()
+        $parts = $raw.Split('|') | Where-Object { $_ }
+        for ($i = 1; $i -lt $parts.Count - 1; $i += 3) {
+            $procId = $parts[$i]
+            taskkill /PID $procId /F 2>$null | Out-Null
+        }
+    }
+
+    Write-Host "Services stopped"
+}
+
+# === REMOVE FILES ===
+if (Test-Path $installDir) {
+    Remove-Item -Path $installDir -Recurse -Force
+    Write-Host "Removed: $installDir" -ForegroundColor Green
+} else {
+    Write-Host "Not installed: $installDir not found"
+}
+
+# === REMOVE FROM PATH ===
+$currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($currentPath -like "*$installDir*") {
+    $newPath = ($currentPath -split ';' | Where-Object { $_ -ne $installDir }) -join ';'
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Host "Removed from PATH" -ForegroundColor Green
+}
+
+# === NOTIFY USER ===
+Write-Host ""
+Write-Host "Uninstall complete!" -ForegroundColor Green
+Write-Host ""
+Write-Host "Note: Project data folders are NOT removed."
+Write-Host "Delete them manually if needed."
+
+=== LINUX/MAC/WSL (Bash)
+
+---
+Template: uninstall.sh
+
+#!/bin/bash
+
+echo "Uninstalling {ToolName} (Linux/Mac/WSL)"
+
+# === PATHS ===
+INSTALL_DIR="$HOME/.local/bin/{toolname}"
+
+# === STOP RUNNING SERVICES ===
+REGISTRY_FILE="$INSTALL_DIR/registry.txt"
+if [ -f "$REGISTRY_FILE" ]; then
+    echo "Stopping running services..."
+    CONTENT=$(cat "$REGISTRY_FILE")
+
+    # Example: Parse DWML format
+    if echo "$CONTENT" | grep -q "=x= watchers;"; then
+        RAW=$(echo "$CONTENT" | grep -o '=x= watchers;[^;]*;' | sed 's/=x= watchers;//' | sed 's/;//')
+        IFS='|' read -ra PARTS <<< "$RAW"
+        i=1
+        while [ $i -lt ${#PARTS[@]} ]; do
+            PID_VAL="${PARTS[$i]}"
+            if [ -n "$PID_VAL" ]; then
+                kill "$PID_VAL" 2>/dev/null
+            fi
+            i=$((i+3))
+        done
+    fi
+
+    echo "Services stopped"
+fi
+
+# === REMOVE FILES ===
+if [ -d "$INSTALL_DIR" ]; then
+    rm -rf "$INSTALL_DIR"
+    echo "Removed: $INSTALL_DIR"
+else
+    echo "Not installed: $INSTALL_DIR not found"
+fi
+
+# === REMOVE FROM PATH ===
+SHELL_RC=""
+if [ -f "$HOME/.zshrc" ]; then SHELL_RC="$HOME/.zshrc"
+elif [ -f "$HOME/.bashrc" ]; then SHELL_RC="$HOME/.bashrc"
+fi
+
+if [ -n "$SHELL_RC" ]; then
+    if grep -q ".local/bin/{toolname}" "$SHELL_RC" 2>/dev/null; then
+        # Remove the lines
+        sed -i '/# {ToolName}/d' "$SHELL_RC"
+        sed -i '/.local\/bin\/{toolname}/d' "$SHELL_RC"
+        echo "Removed PATH entry from $SHELL_RC"
+    fi
+fi
+
+# === NOTIFY USER ===
+echo ""
+echo "Uninstall complete!"
+echo ""
+echo "Note: Project data folders are NOT removed."
+echo "Delete them manually if needed."
+
+=== KEY PATTERNS
+
+---
+Pattern: Safe process termination
+
+Windows:
+  taskkill /PID $procId /F 2>$null | Out-Null
+
+Linux:
+  kill "$PID_VAL" 2>/dev/null
+
+The 2>/dev/null suppresses errors if process already dead.
+
+---
+Pattern: Filter PATH array
+
+Windows (PowerShell):
+  $newPath = ($currentPath -split ';' | Where-Object { $_ -ne $installDir }) -join ';'
+
+This splits by ;, filters out the install dir, rejoins.
+
+---
+Pattern: Remove lines from shell config
+
+Linux (sed):
+  sed -i '/pattern/d' "$SHELL_RC"
+
+The -i flag edits in place. /d deletes matching lines.
+
+---
+Pattern: Preserve user data
+
+Uninstall removes:
+  - Install directory (binaries, scripts)
+  - PATH entries
+
+Uninstall does NOT remove:
+  - Project data folders (.dw/, .config/, etc)
+  - User configuration files
+
+Always notify user about leftover data they may want to clean up.
+
+=== GOTCHAS
+
+1. Always stop services before removing files
+   - Running processes keep file handles open
+   - Windows especially has issues deleting in-use files
+
+2. PowerShell $pid is reserved
+   - Use $procId instead
+
+3. sed -i behaves differently on Mac
+   - Mac: sed -i '' 'pattern' file
+   - Linux: sed -i 'pattern' file
+   - For cross-platform, use temp file approach
+
+4. Registry file may not exist on first run
+   - Always check if file exists before reading
+
+5. Process may already be dead
+   - Suppress errors with 2>/dev/null
+   - Don't fail uninstall if kill fails
+
+=== WHAT TO LEAVE BEHIND
+
+Uninstall should NOT delete:
+- User data created by the tool
+- Configuration files in project folders
+- History/logs that user may want
+
+Uninstall SHOULD delete:
+- Installed binaries and scripts
+- Global config in install directory
+- PATH/shell config entries
+- Service registries

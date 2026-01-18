@@ -1,0 +1,19 @@
+Initial dwpackage - Cross-platform script installer template
+
+- README.md: Overview and usage guide
+- docs/install.txt: Install behavior, templates for PowerShell and Bash
+- docs/uninstall.txt: Uninstall behavior and templates
+- docs/dwml-registry.txt: DWML format for service registries with parser code
+
+Features documented:
+- Dependency checking with optional auto-install
+- Stop running services before update
+- Clean old files before copy (prevents stale files)
+- PATH management (add on install, remove on uninstall)
+- Update remote instances after install
+- Non-interactive mode (-y flag)
+- DWML registry parsing for PowerShell, Bash, and Python
+
+Based on patterns from DocWire installer.
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
